@@ -1,0 +1,12 @@
+protobuf>=6.33.4
+google-genai>=1.0.0
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0
+gspread>=6.0.0
+yt-dlp>=2025.1.1
+imageio-ffmpeg>=0.5.0
+opencc-python-reimplemented>=0.1.7
+PyQt5>=5.15.0
+chrome-lens-py>=0.3.0
+requests>=2.31.0
+pyinstaller>=6.0.0

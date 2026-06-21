@@ -1,0 +1,40 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+Lib/
+Scripts/
+share/
+pyvenv.cfg
+
+# Build outputs
+build/
+dist/
+*.spec.bak
+release/
+
+# Local/private files
+.env
+*.env
+credentials.json
+token.json
+facebook_cookies.txt
+config.json
+*.log
+
+# Download/cache folders
+Audio_Downloads/
+Video_Downloads/
+*.mp3
+*.mp4
+*.wav
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
