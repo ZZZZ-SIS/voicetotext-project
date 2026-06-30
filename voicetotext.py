@@ -10,6 +10,8 @@ import re
 import requests
 import webbrowser
 import asyncio
+import traceback
+import importlib.util
 import opencc
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -18,7 +20,15 @@ import gspread
 
 import yt_dlp
 import imageio_ffmpeg
-from google import genai
+# Google Gemini SDK compatibility: prefer new google-genai, fall back to deprecated google-generativeai if present.
+try:
+    from google import genai as new_genai
+except Exception:
+    new_genai = None
+try:
+    import google.generativeai as old_genai
+except Exception:
+    old_genai = None
 
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
                              QFileDialog, QMessageBox, QVBoxLayout, QHBoxLayout, QSpacerItem,
@@ -29,8 +39,8 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QStandardPaths
 # 尝试导入 chrome_lens_py
 try:
     from chrome_lens_py import LensAPI
-except ImportError:
-    print("警告: chrome_lens_py 未安装。图片翻译功能将不可用。")
+except Exception as e:
+    print(f"警告: chrome_lens_py 导入失败。图片翻译功能将不可用。错误: {e}")
     LensAPI = None
 
 # ----------------------------
@@ -43,6 +53,48 @@ ORIGINAL_GEMINI_MODELS = ["gemini-2.5-flash"]
 GEMINI_MODELS = ORIGINAL_GEMINI_MODELS.copy()
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 COOKIE_FILENAME = 'facebook_cookies.txt'
+# 兼容用户常见命名：打包后可把 cookies.txt 或 facebook_cookies.txt 放在 exe 同目录
+COOKIE_CANDIDATE_FILENAMES = ['cookies.txt', 'facebook_cookies.txt']
+
+
+def get_app_dir():
+    """返回程序所在目录。源码运行时是 .py 所在目录，打包后是 .exe 所在目录。"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_default_cookie_path(cache_dir=None):
+    """
+    优先使用 exe/脚本同目录下的 cookies 文件；找不到时再使用系统缓存目录。
+    这样打包后只要把 cookies.txt 放在 exe 旁边，程序就能识别。
+    """
+    app_dir = get_app_dir()
+    for name in COOKIE_CANDIDATE_FILENAMES:
+        candidate = os.path.join(app_dir, name)
+        if os.path.exists(candidate):
+            return candidate
+
+    if cache_dir:
+        return os.path.join(cache_dir, COOKIE_FILENAME)
+    return os.path.join(app_dir, COOKIE_FILENAME)
+
+
+def ensure_cookie_path(cookie_path):
+    """
+    运行时再次确认 Cookie 文件位置，兼容 exe 同目录和缓存目录。
+    返回实际存在的 Cookie 文件路径；都不存在时返回原路径。
+    """
+    if cookie_path and os.path.exists(cookie_path):
+        return cookie_path
+
+    app_dir = get_app_dir()
+    for name in COOKIE_CANDIDATE_FILENAMES:
+        candidate = os.path.join(app_dir, name)
+        if os.path.exists(candidate):
+            return candidate
+
+    return cookie_path
 
 # Google Key 限制管理
 GOOGLE_KEY_BACKOFF = {}
@@ -52,6 +104,39 @@ GOOGLE_KEY_BACKOFF_SECONDS = 1000
 # 【新增】全局标志位：记录本次软件运行期间 Groq 是否已失败
 # 如果为 True，后续任务将直接使用 Deepgram
 GROQ_HAS_FAILED_THIS_SESSION = False
+
+
+# ----------------------------
+# 运行环境检查：源码运行时提醒缺少依赖；打包后的 exe 不自动 pip 安装，避免破坏用户环境
+# ----------------------------
+def check_runtime_dependencies():
+    required = {
+        "requests": "requests",
+        "gspread": "gspread",
+        "yt_dlp": "yt-dlp",
+        "imageio_ffmpeg": "imageio-ffmpeg",
+        "opencc": "opencc-python-reimplemented",
+        "PyQt5": "PyQt5",
+        "google.auth": "google-auth",
+        "google_auth_oauthlib": "google-auth-oauthlib",
+        "chrome_lens_py": "chrome-lens-py",
+        "google.protobuf": "protobuf",
+    }
+    missing = []
+    for module_name, package_name in required.items():
+        if importlib.util.find_spec(module_name) is None:
+            missing.append(package_name)
+    return sorted(set(missing))
+
+
+def format_missing_dependency_message(missing):
+    if not missing:
+        return ""
+    return (
+        "检测到缺少依赖库：\n"
+        + "\n".join(f"- {name}" for name in missing)
+        + "\n\n请在项目目录执行：\npython -m pip install -r requirements.txt"
+    )
 
 
 # ----------------------------
@@ -151,6 +236,36 @@ def groq_translate_via_chat(prompt, groq_key, log_callback=None, max_tokens=1200
         return None
 
 
+
+def generate_gemini_text(api_key, model_name, prompt):
+    """兼容新版 google-genai 与旧版 google-generativeai 的 Gemini 调用。"""
+    if new_genai is not None:
+        client = new_genai.Client(api_key=api_key)
+        response = client.models.generate_content(model=model_name, contents=prompt)
+        text = getattr(response, "text", None)
+        if text:
+            return text.strip()
+        # 兼容某些返回结构
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            content = getattr(candidates[0], "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            if parts:
+                maybe_text = getattr(parts[0], "text", None)
+                if maybe_text:
+                    return maybe_text.strip()
+        return ""
+
+    if old_genai is not None:
+        old_genai.configure(api_key=api_key)
+        model = old_genai.GenerativeModel(model_name)
+        response = model.generate_content(prompt)
+        if response.candidates and response.candidates[0].content.parts:
+            return response.candidates[0].content.parts[0].text.strip()
+        return ""
+
+    raise RuntimeError("未安装 Gemini SDK。请安装 google-genai。")
+
 def translate_and_correct(text, translate_require, google_keys, groq_keys, unknown_keys, log_callback=None):
     global GEMINI_MODELS, ORIGINAL_GEMINI_MODELS, GOOGLE_KEY_BACKOFF, GOOGLE_KEY_BACKOFF_LOCK, GOOGLE_KEY_BACKOFF_SECONDS
     GEMINI_MODELS = ORIGINAL_GEMINI_MODELS.copy()
@@ -174,14 +289,9 @@ def translate_and_correct(text, translate_require, google_keys, groq_keys, unkno
     for gkey in google_candidates:
         try:
             if log_callback: log_callback("尝试使用 Google Key 进行翻译...")
-            client = genai.Client(api_key=gkey)
             for model_name in list(GEMINI_MODELS):
                 try:
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=prompt
-                    )
-                    result = (getattr(response, "text", None) or "").strip()
+                    result = generate_gemini_text(gkey, model_name, prompt)
                     if result:
                         if log_callback: log_callback("使用 Google Key 翻译成功。")
                         return result
@@ -253,9 +363,11 @@ def get_gspread_client():
 
 def extract_audio_as_mp3(url, log_callback, stop_event, cookie_path):
     log_callback("开始从链接提取音频...")
-    if not os.path.exists(cookie_path):
-        log_callback(f"错误：无法找到Cookie缓存文件。")
+    cookie_path = ensure_cookie_path(cookie_path)
+    if not cookie_path or not os.path.exists(cookie_path):
+        log_callback(f"错误：无法找到Cookie缓存文件。请把 cookies.txt 或 {COOKIE_FILENAME} 放到软件exe同目录，或点击“更新Cookies”。")
         raise Exception("Cookie文件缺失")
+    log_callback(f"已使用Cookie文件: {cookie_path}")
     try:
         ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
@@ -372,6 +484,7 @@ async def async_translate_image(url, log_callback):
         return original_text.strip(), translated_text.strip()
     except Exception as e:
         log_callback(f"图片处理出错: {e}")
+        log_callback(traceback.format_exc())
         raise e
 
 
@@ -572,6 +685,9 @@ class CookieUpdateWorker(QThread):
         self.cookie_path = cookie_path
 
     def run(self):
+        parent_dir = os.path.dirname(self.cookie_path)
+        if parent_dir and not os.path.exists(parent_dir):
+            os.makedirs(parent_dir, exist_ok=True)
         if os.path.exists(self.cookie_path):
             try:
                 os.remove(self.cookie_path)
@@ -744,11 +860,14 @@ class MainWindow(QWidget):
         self.cache_dir = QStandardPaths.writableLocation(QStandardPaths.CacheLocation)
         if not os.path.exists(self.cache_dir): os.makedirs(self.cache_dir)
         self.config_file = os.path.join(self.cache_dir, "config.json")
-        self.cookie_path = os.path.join(self.cache_dir, COOKIE_FILENAME)
+        self.cookie_path = get_default_cookie_path(self.cache_dir)
         self.config = {}
         self.initUI()
         self.load_config()
         self.update_auth_button_state()
+        missing = check_runtime_dependencies()
+        if missing:
+            self.log(format_missing_dependency_message(missing))
 
     def initUI(self):
         self.setStyleSheet("""
@@ -868,6 +987,8 @@ class MainWindow(QWidget):
     def update_cookies(self):
         if QMessageBox.ok == QMessageBox.information(self, "提示", "请关闭Chrome后点击OK",
                                                      QMessageBox.Ok | QMessageBox.Cancel):
+            # 如果 exe/脚本同目录已有 cookies.txt，就更新这个文件；否则更新缓存目录里的 facebook_cookies.txt
+            self.cookie_path = get_default_cookie_path(self.cache_dir)
             self.btn_cookie.setEnabled(False)
             self.cw = CookieUpdateWorker(self.cookie_path)
             self.cw.finished.connect(

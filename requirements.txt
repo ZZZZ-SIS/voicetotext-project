@@ -27,42 +27,40 @@ pyasn1-modules>=0.3.0
 oauthlib>=3.2.0
 requests-oauthlib>=1.3.0
 
-# Gemini
+# Gemini / protobuf
 google-genai>=1.0.0
+google-generativeai>=0.8.0
 protobuf>=6.33.4
 grpcio>=1.60.0
 grpcio-status>=1.60.0
 
-# Chrome Lens
+# Image OCR / Chrome Lens
 chrome-lens-py>=0.3.0
 betterproto>=2.0.0b6
 Pillow>=10.0.0
 
-# Video
+# Audio / video processing
 yt-dlp>=2025.1.1
 imageio-ffmpeg>=0.5.0
 numpy>=2.0.0
 tqdm>=4.66.0
 
-# OpenCC
+# Translation / text processing
 opencc-python-reimplemented>=0.1.7
 
-# Validation
+# Validation / support libs
 pydantic>=2.0.0
 pydantic-core>=2.0.0
 typing-extensions>=4.8.0
-
-# HTTP2
 h2>=4.0.0
 hpack>=4.0.0
 hyperframe>=6.0.0
-
-# Crypto
 cryptography>=42.0.0
 cffi>=1.16.0
 pycparser>=2.21
+setuptools>=70.0.0
 
-# Build
+# Build tools
 pyinstaller>=6.0.0
 pyinstaller-hooks-contrib>=2024.0
 packaging>=23.0
