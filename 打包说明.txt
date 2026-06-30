@@ -1,0 +1,27 @@
+稳定打包版使用步骤
+
+1. 安装依赖：
+   python -m pip install --upgrade pip setuptools wheel
+   python -m pip install -r requirements.txt
+
+2. 打包：
+   python -m PyInstaller --clean "声音转文字.spec"
+
+3. 打包完成后，exe 位置：
+   dist\声音转文字\声音转文字.exe
+
+4. Cookie 文件：
+   推荐把 cookies.txt 或 facebook_cookies.txt 放在 exe 同目录：
+   dist\声音转文字\cookies.txt
+   或：
+   dist\声音转文字\facebook_cookies.txt
+
+5. 如果用户源码运行缺依赖：
+   python -m pip install -r requirements.txt
+
+6. 如果 GitHub Actions 要重新出 Release：
+   git add voicetotext.py requirements.txt "声音转文字.spec"
+   git commit -m "Stabilize PyInstaller build"
+   git tag v1.0.2
+   git push origin main
+   git push origin v1.0.2
